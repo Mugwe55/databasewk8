@@ -1,0 +1,252 @@
+Question 1
+-- Customers Table
+CREATE TABLE Customers (
+    CustomerID INT AUTO_INCREMENT PRIMARY KEY,
+    CustomerName VARCHAR(100) NOT NULL UNIQUE
+);
+
+-- Products Table
+CREATE TABLE Products (
+    ProductID INT AUTO_INCREMENT PRIMARY KEY,
+    ProductName VARCHAR(100) NOT NULL UNIQUE
+);
+
+-- Orders Table
+CREATE TABLE Orders (
+    OrderID INT AUTO_INCREMENT PRIMARY KEY,
+    CustomerID INT NOT NULL,
+    OrderDate DATE NOT NULL,
+    FOREIGN KEY (CustomerID) REFERENCES Customers(CustomerID)
+);
+
+-- OrderDetails Table (many-to-many relationship between Orders and Products)
+CREATE TABLE OrderDetails (
+    OrderDetailID INT AUTO_INCREMENT PRIMARY KEY,
+    OrderID INT NOT NULL,
+    ProductID INT NOT NULL,
+    Quantity INT NOT NULL,
+    FOREIGN KEY (OrderID) REFERENCES Orders(OrderID),
+    FOREIGN KEY (ProductID) REFERENCES Products(ProductID)
+);
+
+-- Insert Customers
+INSERT INTO Customers (CustomerName) VALUES
+('John Doe'),
+('Jane Smith'),
+('Emily Clark');
+
+-- Insert Products
+INSERT INTO Products (ProductName) VALUES
+('Laptop'),
+('Mouse'),
+('Tablet'),
+('Keyboard'),
+('Phone');
+
+-- Insert Orders (assuming order dates for demonstration)
+INSERT INTO Orders (CustomerID, OrderDate) VALUES
+(1, '2025-05-01'), -- John Doe
+(2, '2025-05-02'), -- Jane Smith
+(3, '2025-05-03'); -- Emily Clark
+
+-- Insert OrderDetails (OrderID, ProductID, Quantity)
+-- John Doe: Laptop, Mouse
+INSERT INTO OrderDetails (OrderID, ProductID, Quantity) VALUES
+(1, 1, 2),  -- Laptop x2
+(1, 2, 1);  -- Mouse x1
+
+-- Jane Smith: Tablet, Keyboard, Mouse
+INSERT INTO OrderDetails (OrderID, ProductID, Quantity) VALUES
+(2, 3, 3),  -- Tablet x3
+(2, 4, 1),  -- Keyboard x1
+(2, 2, 2);  -- Mouse x2
+
+-- Emily Clark: Phone
+INSERT INTO OrderDetails (OrderID, ProductID, Quantity) VALUES
+(3, 5, 1);  -- Phone x1
+
+
+Question 2
+-- Create database
+CREATE DATABASE student_portal;
+USE student_portal;
+
+-- Students table
+CREATE TABLE Students (
+    StudentID INT AUTO_INCREMENT PRIMARY KEY,
+    FirstName VARCHAR(50) NOT NULL,
+    LastName VARCHAR(50) NOT NULL,
+    Email VARCHAR(100) NOT NULL UNIQUE,
+    DateOfBirth DATE,
+    EnrollmentDate DATE NOT NULL
+);
+
+-- Courses table
+CREATE TABLE Courses (
+    CourseID INT AUTO_INCREMENT PRIMARY KEY,
+    CourseName VARCHAR(100) NOT NULL,
+    Credits INT NOT NULL,
+    Department VARCHAR(50) NOT NULL
+);
+
+-- Enrollments table (junction table for many-to-many relationship)
+CREATE TABLE Enrollments (
+    EnrollmentID INT AUTO_INCREMENT PRIMARY KEY,
+    StudentID INT NOT NULL,
+    CourseID INT NOT NULL,
+    EnrollmentDate DATE NOT NULL,
+    Grade VARCHAR(2),
+    FOREIGN KEY (StudentID) REFERENCES Students(StudentID),
+    FOREIGN KEY (CourseID) REFERENCES Courses(CourseID)
+);
+
+-- Insert sample data
+INSERT INTO Students (FirstName, LastName, Email, DateOfBirth, EnrollmentDate) VALUES
+('John', 'Doe', 'john.doe@example.com', '2000-05-15', '2022-09-01'),
+('Jane', 'Smith', 'jane.smith@example.com', '2001-03-20', '2022-09-01'),
+('Emily', 'Clark', 'emily.clark@example.com', '1999-11-10', '2021-09-01');
+
+INSERT INTO Courses (CourseName, Credits, Department) VALUES
+('Introduction to Computer Science', 3, 'Computer Science'),
+('Calculus I', 4, 'Mathematics'),
+('English Composition', 3, 'English');
+
+INSERT INTO Enrollments (StudentID, CourseID, EnrollmentDate, Grade) VALUES
+(1, 1, '2022-09-05', 'A'),
+(1, 2, '2022-09-05', 'B+'),
+(2, 1, '2022-09-06', 'A-'),
+(2, 3, '2022-09-06', 'A'),
+(3, 2, '2021-09-07', 'B');
+
+from fastapi import FastAPI, HTTPException, Depends
+from pydantic import BaseModel
+from typing import List, Optional
+from datetime import date
+import mysql.connector
+from mysql.connector import Error
+
+app = FastAPI(title="Student Portal API")
+
+# Database connection
+def get_db():
+    connection = mysql.connector.connect(
+        host="localhost",
+        user="root",
+        password="your_password",
+        database="student_portal"
+    )
+    try:
+        yield connection
+    finally:
+        connection.close()
+
+# Models
+class Student(BaseModel):
+    FirstName: str
+    LastName: str
+    Email: str
+    DateOfBirth: Optional[date] = None
+    EnrollmentDate: date
+
+class StudentResponse(Student):
+    StudentID: int
+
+class Course(BaseModel):
+    CourseName: str
+    Credits: int
+    Department: str
+
+class CourseResponse(Course):
+    CourseID: int
+
+class Enrollment(BaseModel):
+    StudentID: int
+    CourseID: int
+    EnrollmentDate: date
+    Grade: Optional[str] = None
+
+class EnrollmentResponse(Enrollment):
+    EnrollmentID: int
+
+# CRUD Operations for Students
+@app.post("/students/", response_model=StudentResponse)
+def create_student(student: Student, db: mysql.connector.connection.MySQLConnection = Depends(get_db)):
+    cursor = db.cursor(dictionary=True)
+    try:
+        query = """INSERT INTO Students (FirstName, LastName, Email, DateOfBirth, EnrollmentDate) 
+                  VALUES (%s, %s, %s, %s, %s)"""
+        values = (student.FirstName, student.LastName, student.Email, 
+                 student.DateOfBirth, student.EnrollmentDate)
+        cursor.execute(query, values)
+        db.commit()
+        
+        student_id = cursor.lastrowid
+        cursor.execute(f"SELECT * FROM Students WHERE StudentID = {student_id}")
+        return cursor.fetchone()
+    except Error as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        cursor.close()
+
+@app.get("/students/", response_model=List[StudentResponse])
+def read_students(db: mysql.connector.connection.MySQLConnection = Depends(get_db)):
+    cursor = db.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT * FROM Students")
+        return cursor.fetchall()
+    finally:
+        cursor.close()
+
+@app.get("/students/{student_id}", response_model=StudentResponse)
+def read_student(student_id: int, db: mysql.connector.connection.MySQLConnection = Depends(get_db)):
+    cursor = db.cursor(dictionary=True)
+    try:
+        cursor.execute(f"SELECT * FROM Students WHERE StudentID = {student_id}")
+        student = cursor.fetchone()
+        if student is None:
+            raise HTTPException(status_code=404, detail="Student not found")
+        return student
+    finally:
+        cursor.close()
+
+@app.put("/students/{student_id}", response_model=StudentResponse)
+def update_student(student_id: int, student: Student, 
+                  db: mysql.connector.connection.MySQLConnection = Depends(get_db)):
+    cursor = db.cursor(dictionary=True)
+    try:
+        query = """UPDATE Students SET FirstName = %s, LastName = %s, 
+                 Email = %s, DateOfBirth = %s, EnrollmentDate = %s 
+                 WHERE StudentID = %s"""
+        values = (student.FirstName, student.LastName, student.Email, 
+                 student.DateOfBirth, student.EnrollmentDate, student_id)
+        cursor.execute(query, values)
+        db.commit()
+        
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Student not found")
+            
+        cursor.execute(f"SELECT * FROM Students WHERE StudentID = {student_id}")
+        return cursor.fetchone()
+    except Error as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        cursor.close()
+
+@app.delete("/students/{student_id}")
+def delete_student(student_id: int, db: mysql.connector.connection.MySQLConnection = Depends(get_db)):
+    cursor = db.cursor()
+    try:
+        cursor.execute(f"DELETE FROM Students WHERE StudentID = {student_id}")
+        db.commit()
+        
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Student not found")
+            
+        return {"message": f"Student with ID {student_id} deleted successfully"}
+    finally:
+        cursor.close()
+
+
+if __name__ == "__main__":
+    import uvicorn
+ uvicorn.run(app, host="0.0.0.0", port=8000)
